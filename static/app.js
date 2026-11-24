@@ -72,14 +72,14 @@ function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$(
  $("resultmeta").textContent=j.backend+" / "+(t.dpi??j.plan.dpi)+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
 }
-function selectJob(id){selected=id;$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正。重複領域は後のタイルを優先。";const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();const n=j?.state==="complete"?(j.plan.regions?.length||1):0;options("mosaicRoi",Array.from({length:n},(_,i)=>[i+1,"ROI "+(i+1)]));for(const k of ["mosaicPreview","mosaicDownload"])$(k).disabled=!n;enabled()}
+function selectJob(id){selected=id;clearAlignment();$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正。重複領域は後のタイルを優先。";const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();const n=j?.state==="complete"?(j.plan.regions?.length||1):0;options("mosaicRoi",Array.from({length:n},(_,i)=>[i+1,"ROI "+(i+1)]));for(const k of ["mosaicPreview","mosaicDownload","alignment"])$(k).disabled=!n;enabled()}
 $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("tile").onchange=()=>{selectionVersion++;showTile()};
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
 for(const [id,fmt] of [["downloadOriginal","original"],["downloadJpeg","jpeg"],["downloadPdf","pdf"]])$(id).onclick=()=>{const quality=+$("quality").value;if(fmt==="jpeg"&&(!Number.isInteger(quality)||quality<1||quality>100)){alert("品質は1〜100");return}location.href="/api/download?"+new URLSearchParams({id:selected,tile:$("tile").value,format:fmt,quality,sampling:$("sampling").value})};
 $("downloadZip").onclick=()=>{location.href="/api/zip?id="+selected};
 function mosaicQuery(scale){return new URLSearchParams({id:selected,roi:$("mosaicRoi").value,scale})}
-$("mosaicRoi").onchange=()=>{$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正"};
+$("mosaicRoi").onchange=()=>{clearAlignment();$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正"};
 $("mosaicPreview").onclick=async()=>{
  const q=mosaicQuery("preview");
  try{const p=await api("/api/mosaic-plan?"+q);if(q.get("id")!==selected||q.get("roi")!==$("mosaicRoi").value)return;
@@ -88,6 +88,22 @@ $("mosaicPreview").onclick=async()=>{
  }catch(e){$("mosaicInfo").textContent=e.message}
 };
 $("mosaicImage").onerror=()=>{$("mosaicInfo").textContent="合成プレビューの取得に失敗しました"};
+let alignmentToken=0;
+function clearAlignment(){alignmentToken++;$("alignmentInfo").textContent="";$("alignmentPairs").replaceChildren()}
+$("alignment").onclick=async()=>{
+ clearAlignment();const token=alignmentToken,q=mosaicQuery("full");
+ $("alignment").disabled=true;$("alignmentInfo").textContent="重複領域を測定中…";
+ try{
+  const p=await api("/api/alignment?"+q);if(token!==alignmentToken)return;
+  $("alignmentInfo").textContent=p.pairs.length+"組 / 信頼候補 "+p.reliableCount+"組 / 補正未適用（公称座標）";
+  const table=document.createElement("table"),head=table.insertRow();
+  for(const label of ["タイル","補正候補 X,Y (mm)","相関","ピーク差","判定"]){const th=document.createElement("th");th.textContent=label;head.append(th)}
+  const labels={reliable_candidate:"信頼候補",ambiguous:"曖昧",low_texture:"低テクスチャ",low_correlation:"低相関",search_boundary:"探索端",insufficient_overlap:"重複不足"};
+  for(const pair of p.pairs){const row=table.insertRow();for(const val of [pair.tileA+" → "+pair.tileB,pair.correctionMm?.join(", ")??"—",pair.score??"—",pair.peakMargin??"—",labels[pair.status]||pair.status])row.insertCell().textContent=val}
+  $("alignmentPairs").append(table);
+ }catch(e){if(token===alignmentToken)$("alignmentInfo").textContent=e.message}
+ finally{if(token===alignmentToken)$("alignment").disabled=false}
+};
 $("mosaicDownload").onclick=()=>{const q=mosaicQuery("full");q.set("download","1");location.href="/api/mosaic?"+q};
 $("resume").onclick=async()=>{
  const id=selected,j=history.find(x=>x.id===id);

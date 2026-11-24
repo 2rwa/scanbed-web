@@ -143,6 +143,9 @@ class ApiTests(unittest.TestCase):
         originals=[self.get("/api/image?id="+j["id"]+"&tile="+str(t["index"]))[0] for t in j["results"]]
         p=json.loads(self.get("/api/mosaic-plan"+q)[0])
         self.assertFalse(p["calibrated"])
+        a=json.loads(self.get("/api/alignment"+q)[0])
+        self.assertFalse(a["applied"])
+        self.assertEqual(len(a["pairs"]),1)
         self.assertEqual((p["width"],p["height"]),(118,142))
         data,_=self.get("/api/mosaic"+q)
         with Image.open(io.BytesIO(data)) as im:

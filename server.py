@@ -7,6 +7,7 @@ from urllib.parse import urlsplit, parse_qs
 from PIL import Image, ImageDraw
 from geometry import plan, batch_plan, DPI, MODES, KEYS, LIMIT
 from mosaic import layout, compose
+from alignment import diagnose
 
 STATIC=Path(__file__).resolve().parent/"static"
 ID=re.compile(r"[0-9a-f]{32}")
@@ -244,6 +245,11 @@ class Handler(BaseHTTPRequestHandler):
             if p=="/api/history": return self.send(self.scanner.history())
             if p=="/api/status": return self.send({"active":self.scanner.active})
             if p=="/api/job": return self.send(self.scanner.read(q["id"][0]))
+            if p=="/api/alignment":
+                j=self.scanner.read(q["id"][0]);roi=int(q.get("roi",[1])[0])
+                if not self.scanner.mosaic_guard.acquire(blocking=False): raise Busy("derived image processing busy")
+                try: return self.send(diagnose(j,self.scanner.root/j["id"],roi))
+                finally: self.scanner.mosaic_guard.release()
             if p in ("/api/mosaic-plan","/api/mosaic"):
                 j=self.scanner.read(q["id"][0]);roi=int(q.get("roi",[1])[0])
                 scale=q.get("scale",["preview"])[0]

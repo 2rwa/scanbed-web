@@ -85,6 +85,10 @@ const {join}=require("node:path");
   assert.ok((await page.locator("#mosaicInfo").textContent()).includes("未校正"));
   const mosaicDownload=page.waitForEvent("download");await page.click("#mosaicDownload");
   const md=await mosaicDownload;assert.equal(md.suggestedFilename(),"roi-01-nominal-full.png");assert.equal(await md.failure(),null);
+  await page.click("#alignment");
+  await page.waitForFunction(()=>document.querySelector("#alignmentInfo").textContent.includes("補正未適用"));
+  assert.equal(await page.locator("#alignmentPairs table tr").count(),2);
+  console.log("Overlap diagnostics displayed without applying correction");
   console.log("Nominal mosaic preview and full PNG download passed");
   console.log("Browser ROI editing, split visualization, keyboard, fixed position, scan and JPEG download passed");
  }finally{if(browser)await browser.close();child.kill();await new Promise(r=>child.once("exit",r));rmSync(root,{recursive:true,force:true})}
