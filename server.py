@@ -1,5 +1,5 @@
 """Standalone HTTP API. Default mock; no hardware discovery or access on startup."""
-import argparse, contextlib, fcntl, io, json, os, re, shutil, subprocess, tempfile, threading, time, uuid, zipfile
+import argparse, contextlib, fcntl, hashlib, io, json, os, re, shutil, subprocess, tempfile, threading, time, uuid, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -12,6 +12,10 @@ ID=re.compile(r"[0-9a-f]{32}")
 class Busy(Exception): pass
 class Cancelled(Exception): pass
 
+def digest(path):
+    with path.open('rb') as f:
+        return hashlib.file_digest(f,'sha256').hexdigest()
+
 class Scanner:
     def __init__(self,root,device=None,lock_path=None):
         self.root=Path(root).resolve()
@@ -21,6 +25,8 @@ class Scanner:
         self.guard=threading.Lock()
         self.active=None
         self.stop=threading.Event()
+        # Never recover a live job automatically: a process restart is not permission to scan.
+        # A stale running manifest may be explicitly resumed when the shared lock is free.
 
     def read(self,id):
         if not ID.fullmatch(id): raise ValueError("invalid job ID")
@@ -46,13 +52,63 @@ class Scanner:
             if shutil.disk_usage(self.root).free < sum(t["pixels"] for t in p["tiles"])*4+50_000_000:
                 raise ValueError("insufficient disk space")
             j={"id":uuid.uuid4().hex,"created":datetime.now(timezone.utc).isoformat(),
-               "backend":"sane" if self.device else "mock","state":"running","plan":p,"results":[]}
+               "backend":"sane" if self.device else "mock","device":self.device,"state":"running","plan":p,"results":[],"attempts":1}
             (self.root/j["id"]).mkdir()
             self.save(j)
             self.stop.clear()
             self.active=j["id"]
             threading.Thread(target=self.worker,args=(j,),daemon=True).start()
         return j["id"]
+
+    def resume(self,id,confirmed):
+        if confirmed is not True: raise ValueError("confirm unchanged original position")
+        with self.guard:
+            if self.active: raise Busy("scanner busy")
+            # Check the OS lock before inspecting or editing a stale manifest.
+            # The worker also acquires this lock, so a competing scanner never overlaps.
+            with self.lock_path.open("a") as lock:
+                try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                except BlockingIOError: raise Busy("shared scanner lock busy")
+                j=self.read(id)
+                if j["state"] not in ("failed","cancelled","running"):
+                    raise ValueError("job cannot be resumed")
+                if j["backend"]!=("sane" if self.device else "mock") or (self.device and j.get("device")!=self.device):
+                    raise ValueError("scanner backend or device changed")
+                folder=self.root/id
+                done=set()
+                for t in j["results"]:
+                    path=folder/t["file"]
+                    if not path.is_file() or path.stat().st_size!=t["bytes"]:
+                        raise ValueError("completed original missing or changed; start a new job")
+                    with Image.open(path) as im:
+                        if im.size!=(t["widthPx"],t["heightPx"]): raise ValueError("original dimensions changed")
+                        im.verify()
+                    checksum=digest(path)
+                    if t.get("sha256") and t["sha256"]!=checksum:
+                        raise ValueError("completed original checksum mismatch")
+                    # Older manifests did not record checksums: require new capture rather than assume integrity.
+                    if not t.get("sha256"):
+                        raise ValueError("legacy original has no acquisition checksum; start a new job")
+                    done.add(t["index"])
+                pending=[t for t in j["plan"]["tiles"] if t["index"] not in done]
+                if not pending: raise ValueError("no missing tiles")
+                for t in pending:
+                    p=t.get("settings",j["plan"])
+                    ext="jpg" if p["format"]=="jpeg" else "png"
+                    if (folder/f'tile-{t["index"]:03d}.{ext}').exists():
+                        raise ValueError("untracked original exists; refusing overwrite")
+                if shutil.disk_usage(self.root).free < sum(t["pixels"] for t in pending)*4+50_000_000:
+                    raise ValueError("insufficient disk space")
+                j.setdefault("previousAttempts",[]).append({"state":j["state"],"error":j.get("error"),"failedTile":j.get("failedTile"),"ended":j.get("ended")})
+                j["attempts"]=j.get("attempts",1)+1
+                j["resumed"]=datetime.now(timezone.utc).isoformat()
+                j["state"]="running"
+                for k in ("error","failedTile","ended"): j.pop(k,None)
+                self.save(j)
+                self.stop.clear()
+                self.active=id
+            threading.Thread(target=self.worker,args=(j,),daemon=True).start()
+        return id
 
     def cancel(self,id):
         with self.guard:
@@ -65,23 +121,30 @@ class Scanner:
             with self.lock_path.open("a") as lock:
                 try: fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
                 except BlockingIOError: raise Busy("shared scanner lock busy")
+                done={r["index"] for r in j["results"]}
                 for t in j["plan"]["tiles"]:
+                    if t["index"] in done: continue
                     if self.stop.is_set(): raise Cancelled()
+                    j["failedTile"]=t["index"]
                     p=t.get("settings",j["plan"])
                     ext="jpg" if p["format"]=="jpeg" else "png"
                     name=f'tile-{t["index"]:03d}.{ext}'
                     temp=folder/(name+".part")
                     try:
+                        if (folder/name).exists(): raise ValueError("refusing to overwrite an original")
                         self.capture(p,t,temp)
                         if self.stop.is_set(): raise Cancelled()
                         with Image.open(temp) as im:
                             w,h=im.size
                             if w*h>LIMIT: raise ValueError("actual image exceeds 35 MP")
                             im.verify()
-                        temp.replace(folder/name)
+                        checksum=digest(temp)
+                        # Atomic publication without overwrite, even if an unexpected file appears.
+                        os.link(temp,folder/name)
                         j["results"].append({"index":t["index"],"file":name,"widthPx":w,"heightPx":h,
-                                             "bytes":(folder/name).stat().st_size,"region":{k:t[k] for k in KEYS},
+                                             "bytes":(folder/name).stat().st_size,"sha256":checksum,"region":{k:t[k] for k in KEYS},
                                              "dpi":p["dpi"],"mode":p["mode"],"roiIndex":t.get("roiIndex",1)})
+                        j.pop("failedTile",None)
                         self.save(j)
                     finally: temp.unlink(missing_ok=True)
                 j["state"]="complete"
@@ -89,6 +152,7 @@ class Scanner:
         except Exception as e:
             j["state"]="failed";j["error"]=str(e)[-600:]
         finally:
+            j["ended"]=datetime.now(timezone.utc).isoformat()
             with self.guard:
                 try: self.save(j)
                 finally: self.active=None
@@ -208,6 +272,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path=="/api/plan": return self.send(plan(obj))
             if self.path=="/api/batch-plan": return self.send(batch_plan(obj.get("regions")))
             if self.path=="/api/scan": return self.send({"id":self.scanner.start(obj)},status=202)
+            if self.path=="/api/resume": return self.send({"id":self.scanner.resume(obj["id"],obj.get("confirmedUnmoved"))},status=202)
             if self.path=="/api/cancel":
                 self.scanner.cancel(obj["id"]);return self.send({"ok":True})
             raise FileNotFoundError("not found")

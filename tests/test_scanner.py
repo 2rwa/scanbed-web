@@ -1,4 +1,4 @@
-import io,json,tempfile,threading,time,unittest,zipfile
+import io,json,tempfile,threading,time,unittest,zipfile,hashlib
 from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
@@ -90,6 +90,53 @@ class ApiTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as e:self.get("/api/scan",{"regions":[a,dict(b,left=999)]})
         self.assertEqual(e.exception.code,400)
         self.assertEqual(len(json.loads(self.get("/api/history")[0])),1)
+    def test_resume_preserves_original_and_only_captures_missing(self):
+        capture=self.scanner.capture
+        calls=[]
+        def fail_once(p,t,path):
+            calls.append(t["index"])
+            if t["index"]==2 and calls.count(2)==1:
+                path.write_bytes(b"partial")
+                raise RuntimeError("simulated I/O error")
+            return capture(p,t,path)
+        self.scanner.capture=fail_once
+        j=self.job(dict(region(),method="split"))
+        self.assertEqual(j["state"],"failed")
+        self.assertEqual(j["failedTile"],2)
+        self.assertEqual(calls,[1,2])
+        q="?id="+j["id"]+"&tile=1"
+        raw=self.get("/api/image"+q)[0]
+        self.assertEqual(j["results"][0]["sha256"],hashlib.sha256(raw).hexdigest())
+        original=Path(self.tmp.name)/j["id"]/j["results"][0]["file"]
+        stamp=original.stat().st_mtime_ns
+        self.assertFalse(list(original.parent.glob("*.part")))
+        with self.assertRaises(HTTPError): self.get("/api/resume",{"id":j["id"]})
+        self.get("/api/resume",{"id":j["id"],"confirmedUnmoved":True})
+        for _ in range(100):
+            j=json.loads(self.get("/api/job?id="+j["id"])[0])
+            if j["state"]!="running":break
+            time.sleep(.03)
+        self.assertEqual(j["state"],"complete")
+        self.assertEqual(j["attempts"],2)
+        self.assertEqual(calls,[1,2,2])
+        self.assertEqual(stamp,original.stat().st_mtime_ns)
+        self.assertEqual(raw,self.get("/api/image"+q)[0])
+        self.assertEqual(j["previousAttempts"][0]["failedTile"],2)
+        with self.assertRaises(HTTPError): self.get("/api/resume",{"id":j["id"],"confirmedUnmoved":True})
+
+    def test_resume_rejects_tampered_original(self):
+        capture=self.scanner.capture
+        def fail(p,t,path):
+            if t["index"]==2:raise RuntimeError("simulated failure")
+            return capture(p,t,path)
+        self.scanner.capture=fail
+        j=self.job(dict(region(),method="split"))
+        path=Path(self.tmp.name)/j["id"]/j["results"][0]["file"]
+        with path.open("ab") as f:f.write(b"changed")
+        with self.assertRaises(HTTPError) as e:
+            self.get("/api/resume",{"id":j["id"],"confirmedUnmoved":True})
+        self.assertEqual(e.exception.code,400)
+
     def test_jpeg_capture(self):
         j=self.job(dict(region(),format="jpeg"))
         self.assertEqual(j["state"],"complete")

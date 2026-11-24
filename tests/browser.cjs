@@ -6,7 +6,7 @@ const {tmpdir}=require("node:os");
 const {join}=require("node:path");
 (async()=>{
  const root=mkdtempSync(join(tmpdir(),"scanbed-ui-"));
- const child=spawn("python",["server.py","--port","18766","--data",root],{stdio:"inherit"});
+ const child=spawn("python",["tests/mock_fault_server.py",root],{stdio:"inherit"});
  let browser;
  try{
   for(let i=0;i<100;i++){try{if((await fetch("http://127.0.0.1:18766/api/config")).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
@@ -61,6 +61,24 @@ const {join}=require("node:path");
   await page.selectOption("#tile","2");
   await page.waitForFunction(()=>document.querySelector("#resultmeta").textContent.includes("600 dpi")&&document.querySelector("#result").naturalWidth===236);
   console.log("Batch ROI, mixed DPI and persistent preset passed");
+  // The test-only backend fails once for the second tile of a 400dpi split.
+  await page.selectOption("#dpi","400");await page.selectOption("#method","split");
+  await page.waitForFunction(()=>!document.querySelector("#scan").disabled);
+  await page.click("#scan");
+  await page.waitForFunction(()=>document.querySelector("#status").textContent.includes("failed")&&!document.querySelector("#resume").disabled);
+  const failedId=await page.inputValue("#history");
+  const before=await (await page.request.get("/api/job?id="+failedId)).json();
+  assert.equal(before.results.length,1);
+  page.once("dialog",d=>d.dismiss());await page.click("#resume");
+  assert.equal((await (await page.request.get("/api/job?id="+failedId)).json()).state,"failed");
+  page.once("dialog",d=>d.accept());await page.click("#resume");
+  await page.waitForFunction(()=>document.querySelector("#status").textContent==="complete"&&document.querySelector("#tile").options.length===2);
+  const after=await (await page.request.get("/api/job?id="+failedId)).json();
+  assert.equal(after.attempts,2);
+  assert.deepEqual(after.results[0],before.results[0]);
+  assert.equal(after.results.length,2);
+  assert.ok(await page.locator("#resume").isDisabled());
+  console.log("Browser failure recovery and original preservation passed");
   console.log("Browser ROI editing, split visualization, keyboard, fixed position, scan and JPEG download passed");
  }finally{if(browser)await browser.close();child.kill();await new Promise(r=>child.once("exit",r));rmSync(root,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exitCode=1});

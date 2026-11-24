@@ -20,6 +20,7 @@ function render(){
 }
 function enabled(){const busy=!!active||starting;$("scan").disabled=busy||!planned;$("preview").disabled=busy;$("cancel").disabled=!owned||active!==owned;
  $("addRegion").disabled=!planned||queue.length>=32;$("batchScan").disabled=busy||!queue.length;$("savePreset").disabled=!planned;
+ const j=history.find(j=>j.id===selected);$("resume").disabled=busy||!j||!["failed","cancelled","running"].includes(j.state)||j.results.length>=j.plan.tiles.length;
 }
 function schedulePlan(){clearTimeout(planTimer);request++;planned=null;enabled();planTimer=setTimeout(refreshPlan,100)}
 async function refreshPlan(){
@@ -66,21 +67,28 @@ $("edit").onchange=render;$("full").onclick=()=>sync({left:0,top:0,width:210,hei
 async function start(preview,batch=false){if(active||starting)return;starting=true;enabled();try{const p=batch?{regions:queue.map(q=>q.settings)}:preview?{left:0,top:0,width:210,height:291,dpi:200,mode:"24bit Color",format:"png",method:"single"}:input();$("scan").disabled=true;$("preview").disabled=true;const j=await api("/api/scan",p);active=owned=j.id;ownedVersion=selectionVersion;if(preview)previewId=j.id}catch(e){$("status").textContent=e.message}finally{starting=false;enabled()}}
 $("scan").onclick=()=>start(false);$("preview").onclick=()=>start(true);$("cancel").onclick=async()=>{try{await api("/api/cancel",{id:owned})}catch(e){$("status").textContent=e.message}};
 function tileInfo(){return history.find(j=>j.id===selected)}
-function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$("tile").value);for(const id of ["downloadOriginal","downloadJpeg","downloadPdf"])$(id).disabled=!t;$("downloadZip").disabled=!j?.results.length;if(!t){$("result").removeAttribute("src");$("resultmeta").textContent=j?.error||"";return}
+function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$("tile").value);for(const id of ["downloadOriginal","downloadJpeg","downloadPdf"])$(id).disabled=!t;$("downloadZip").disabled=!j?.results.length;if(!t){$("result").removeAttribute("src");$("resultmeta").textContent=j?j.state+" / "+j.results.length+"/"+j.plan.tiles.length+"枚 "+(j.error||""):"";return}
  $("result").src="/api/image?id="+j.id+"&tile="+t.index;
  $("resultmeta").textContent=j.backend+" / "+(t.dpi??j.plan.dpi)+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
 }
-function selectJob(id){selected=id;const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile()}
+function selectJob(id){selected=id;const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();enabled()}
 $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("tile").onchange=()=>{selectionVersion++;showTile()};
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
 for(const [id,fmt] of [["downloadOriginal","original"],["downloadJpeg","jpeg"],["downloadPdf","pdf"]])$(id).onclick=()=>{const quality=+$("quality").value;if(fmt==="jpeg"&&(!Number.isInteger(quality)||quality<1||quality>100)){alert("品質は1〜100");return}location.href="/api/download?"+new URLSearchParams({id:selected,tile:$("tile").value,format:fmt,quality,sampling:$("sampling").value})};
 $("downloadZip").onclick=()=>{location.href="/api/zip?id="+selected};
+$("resume").onclick=async()=>{
+ const id=selected,j=history.find(x=>x.id===id);
+ if(!j||active||starting||!confirm("原稿台上の対象物を動かしていませんか？ 同じ条件で未取得タイルのみ再開します。"))return;
+ starting=true;enabled();
+ try{const res=await api("/api/resume",{id,confirmedUnmoved:true});active=owned=res.id;ownedVersion=selectionVersion;$("status").textContent="再開中"}
+ catch(e){$("status").textContent=e.message}finally{starting=false;enabled()}
+};
 async function poll(){
  try{const status=await api("/api/status");active=status.active;
  history=await api("/api/history");const existing=$("history").value;
- options("history",[["","画像を選択"],...history.map(j=>[j.id,j.created.slice(0,19)+" / "+(j.plan.regions?j.plan.regions.length+" ROI":j.plan.dpi+" dpi")+" / "+j.state+" / "+j.results.length+"枚"])]);
+ options("history",[["","画像を選択"],...history.map(j=>[j.id,j.created.slice(0,19)+" / "+(j.plan.regions?j.plan.regions.length+" ROI":j.plan.dpi+" dpi")+" / "+j.state+" / "+j.results.length+"/"+j.plan.tiles.length+"枚"])]);
  $("history").value=selected||existing||"";
  if(owned){const j=history.find(j=>j.id===owned);if(j&&j.state!=="running"){if(j.id===previewId&&j.results.length===1){$("overview").setAttribute("href","/api/image?id="+j.id+"&tile=1");previewId=null}
  if(selectionVersion===ownedVersion)selectJob(j.id);$("status").textContent=j.state+(j.error?": "+j.error:"");owned=null}}
