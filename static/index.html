@@ -14,7 +14,9 @@
 <div class="buttons"><button id="full">全面</button><button id="fit">一括に収める</button><button id="preview">200dpi 全面プレビュー</button></div>
 <div id="hint" aria-live="polite"></div><progress id="meter" max="30" value="0"></progress><p id="dimensions"></p>
 <button id="scan" disabled>選択範囲を取得</button> <button id="cancel" disabled>停止</button>
-<p class="small">青：要求範囲。緑：取得タイル。安全予算30MP/枚（既存35MP制限に余裕）。取得成功を保証するものではありません。</p>
+<h2>複数矩形の予約</h2><div class="buttons"><button id="addRegion" disabled>現在の矩形を追加</button><button id="clearQueue">全削除</button></div><div id="queueList"></div><p id="queueCount"></p><button id="batchScan" disabled>登録領域を連続取得</button>
+<h2>プリセット（このブラウザ）</h2><label>名前<input id="presetName" maxlength="60"></label><button id="savePreset" disabled>条件を保存</button><label>保存済み<select id="presets"></select></label><div class="buttons"><button id="loadPreset">呼出</button><button id="deletePreset">削除</button></div>
+<p class="small">青：要求範囲。紫：予約済み。緑：取得タイル。安全予算30MP/枚（既存35MP制限に余裕）。取得成功を保証するものではありません。</p>
 </aside><section>
 <h2>原稿台 <small>210 × 291 mm・公称座標</small></h2>
 <div class="bed"><svg id="bed" viewBox="-14 -14 238 319" tabindex="0" aria-label="原稿台の矩形を編集">
@@ -22,7 +24,7 @@
 <rect x="0" y="0" width="210" height="291" fill="#e5e7eb" id="background"/>
 <image id="overview" x="0" y="0" width="210" height="291" preserveAspectRatio="none" pointer-events="none"/>
 <rect width="210" height="291" fill="url(#grid)" pointer-events="none"/>
-<g id="ticks" pointer-events="none"></g><g id="tiles" pointer-events="none"></g>
+<g id="ticks" pointer-events="none"></g><g id="queuedRects" pointer-events="none"></g><g id="tiles" pointer-events="none"></g>
 <rect id="roi" fill="#2563eb" fill-opacity=".12" stroke="#2563eb" stroke-width=".8" data-handle="move"/>
 <g id="handles"></g></svg></div>
 <p id="coords" class="small">原稿台座標: —</p>

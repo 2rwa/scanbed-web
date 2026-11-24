@@ -5,7 +5,7 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from PIL import Image, ImageDraw
-from geometry import plan, DPI, MODES, KEYS, LIMIT
+from geometry import plan, batch_plan, DPI, MODES, KEYS, LIMIT
 
 STATIC=Path(__file__).resolve().parent/"static"
 ID=re.compile(r"[0-9a-f]{32}")
@@ -40,7 +40,7 @@ class Scanner:
         return sorted(out,key=lambda j:j["created"],reverse=True)
 
     def start(self,obj):
-        p=plan(obj)
+        p=batch_plan(obj['regions']) if 'regions' in obj else plan(obj)
         with self.guard:
             if self.active: raise Busy("scanner busy")
             if shutil.disk_usage(self.root).free < sum(t["pixels"] for t in p["tiles"])*4+50_000_000:
@@ -67,7 +67,7 @@ class Scanner:
                 except BlockingIOError: raise Busy("shared scanner lock busy")
                 for t in j["plan"]["tiles"]:
                     if self.stop.is_set(): raise Cancelled()
-                    p=j["plan"]
+                    p=t.get("settings",j["plan"])
                     ext="jpg" if p["format"]=="jpeg" else "png"
                     name=f'tile-{t["index"]:03d}.{ext}'
                     temp=folder/(name+".part")
@@ -80,7 +80,8 @@ class Scanner:
                             im.verify()
                         temp.replace(folder/name)
                         j["results"].append({"index":t["index"],"file":name,"widthPx":w,"heightPx":h,
-                                             "bytes":(folder/name).stat().st_size,"region":{k:t[k] for k in KEYS}})
+                                             "bytes":(folder/name).stat().st_size,"region":{k:t[k] for k in KEYS},
+                                             "dpi":p["dpi"],"mode":p["mode"],"roiIndex":t.get("roiIndex",1)})
                         self.save(j)
                     finally: temp.unlink(missing_ok=True)
                 j["state"]="complete"
@@ -137,7 +138,7 @@ class Scanner:
         ext="jpg" if fmt=="jpeg" else fmt
         buf=io.BytesIO()
         with Image.open(path) as im:
-            d=j["plan"]["dpi"]
+            d=t.get("dpi",j["plan"].get("dpi"))
             if fmt=="jpeg": im.convert("RGB").save(buf,format="JPEG",quality=quality,subsampling=sampling,dpi=(d,d))
             elif fmt=="pdf": im.convert("RGB").save(buf,format="PDF",resolution=d)
             else: im.save(buf,format="PNG",dpi=(d,d))
@@ -205,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
             obj=json.loads(self.rfile.read(n))
             if not isinstance(obj,dict): raise ValueError("object required")
             if self.path=="/api/plan": return self.send(plan(obj))
+            if self.path=="/api/batch-plan": return self.send(batch_plan(obj.get("regions")))
             if self.path=="/api/scan": return self.send({"id":self.scanner.start(obj)},status=202)
             if self.path=="/api/cancel":
                 self.scanner.cancel(obj["id"]);return self.send({"ok":True})

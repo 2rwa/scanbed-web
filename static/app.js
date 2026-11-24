@@ -1,7 +1,8 @@
 "use strict";
 const $=id=>document.getElementById(id),keys=["left","top","width","height"],svgNS="http://www.w3.org/2000/svg";
 let roi={left:5,top:5,width:80,height:60},cfg=null,planned=null,request=0,drag=null,active=null,owned=null,previewId=null,selected=null,history=[],angle=0,zoom=0;
-let selectionVersion=0,ownedVersion=0,planTimer=null;
+let selectionVersion=0,ownedVersion=0,planTimer=null,starting=false;
+let queue=[],presets=[];
 const round=v=>Math.round(v*10)/10,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function node(tag,attrs,parent){const n=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);parent.append(n);return n}
 function options(id,items){$(id).replaceChildren(...items.map(([v,t])=>new Option(t,v)))}
@@ -17,7 +18,9 @@ function render(){
   if($("edit").value!=="fixed")node("rect",{x:a-1.8,y:b-1.8,width:3.6,height:3.6,fill:"#2563eb","data-handle":name},$("handles"));
  }
 }
-function enabled(){ $("scan").disabled=!!active||!planned;$("preview").disabled=!!active;$("cancel").disabled=!owned||active!==owned}
+function enabled(){const busy=!!active||starting;$("scan").disabled=busy||!planned;$("preview").disabled=busy;$("cancel").disabled=!owned||active!==owned;
+ $("addRegion").disabled=!planned||queue.length>=32;$("batchScan").disabled=busy||!queue.length;$("savePreset").disabled=!planned;
+}
 function schedulePlan(){clearTimeout(planTimer);request++;planned=null;enabled();planTimer=setTimeout(refreshPlan,100)}
 async function refreshPlan(){
  const seq=++request;planned=null;enabled();$("tiles").replaceChildren();
@@ -60,15 +63,15 @@ $("bed").addEventListener("keydown",e=>{const delta={ArrowLeft:[-1,0],ArrowRight
 for(const k of keys)$(k).addEventListener("change",()=>{const raw=Object.fromEntries(keys.map(k=>[k,Number($(k).value)]));if(keys.some(k=>$(k).value===""||!Number.isFinite(raw[k]))){sync(roi);return}if(raw.left<0||raw.top<0||raw.width<3||raw.height<3||raw.left+raw.width>210.00001||raw.top+raw.height>291.00001){$("hint").textContent="原稿台の範囲外です。直前の値に戻しました。";for(const k of keys)$(k).value=roi[k].toFixed(1);return}sync(raw)});
 for(const id of ["dpi","mode","format","method"])$(id).addEventListener("change",refreshPlan);
 $("edit").onchange=render;$("full").onclick=()=>sync({left:0,top:0,width:210,height:291});$("fit").onclick=fit;
-async function start(preview){try{const p=preview?{left:0,top:0,width:210,height:291,dpi:200,mode:"24bit Color",format:"png",method:"single"}:input();$("scan").disabled=true;$("preview").disabled=true;const j=await api("/api/scan",p);active=owned=j.id;ownedVersion=selectionVersion;if(preview)previewId=j.id;enabled()}catch(e){$("status").textContent=e.message;enabled()}}
+async function start(preview,batch=false){if(active||starting)return;starting=true;enabled();try{const p=batch?{regions:queue.map(q=>q.settings)}:preview?{left:0,top:0,width:210,height:291,dpi:200,mode:"24bit Color",format:"png",method:"single"}:input();$("scan").disabled=true;$("preview").disabled=true;const j=await api("/api/scan",p);active=owned=j.id;ownedVersion=selectionVersion;if(preview)previewId=j.id}catch(e){$("status").textContent=e.message}finally{starting=false;enabled()}}
 $("scan").onclick=()=>start(false);$("preview").onclick=()=>start(true);$("cancel").onclick=async()=>{try{await api("/api/cancel",{id:owned})}catch(e){$("status").textContent=e.message}};
 function tileInfo(){return history.find(j=>j.id===selected)}
 function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$("tile").value);for(const id of ["downloadOriginal","downloadJpeg","downloadPdf"])$(id).disabled=!t;$("downloadZip").disabled=!j?.results.length;if(!t){$("result").removeAttribute("src");$("resultmeta").textContent=j?.error||"";return}
  $("result").src="/api/image?id="+j.id+"&tile="+t.index;
- $("resultmeta").textContent=j.backend+" / "+j.plan.dpi+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
+ $("resultmeta").textContent=j.backend+" / "+(t.dpi??j.plan.dpi)+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
 }
-function selectJob(id){selected=id;const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"Tile "+t.index]));$("history").value=id;showTile()}
+function selectJob(id){selected=id;const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile()}
 $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("tile").onchange=()=>{selectionVersion++;showTile()};
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
@@ -77,7 +80,7 @@ $("downloadZip").onclick=()=>{location.href="/api/zip?id="+selected};
 async function poll(){
  try{const status=await api("/api/status");active=status.active;
  history=await api("/api/history");const existing=$("history").value;
- options("history",[["","画像を選択"],...history.map(j=>[j.id,j.created.slice(0,19)+" / "+j.plan.dpi+" dpi / "+j.state+" / "+j.results.length+"枚"])]);
+ options("history",[["","画像を選択"],...history.map(j=>[j.id,j.created.slice(0,19)+" / "+(j.plan.regions?j.plan.regions.length+" ROI":j.plan.dpi+" dpi")+" / "+j.state+" / "+j.results.length+"枚"])]);
  $("history").value=selected||existing||"";
  if(owned){const j=history.find(j=>j.id===owned);if(j&&j.state!=="running"){if(j.id===previewId&&j.results.length===1){$("overview").setAttribute("href","/api/image?id="+j.id+"&tile=1");previewId=null}
  if(selectionVersion===ownedVersion)selectJob(j.id);$("status").textContent=j.state+(j.error?": "+j.error:"");owned=null}}
@@ -89,5 +92,30 @@ async function poll(){
 async function init(){cfg=await api("/api/config");$("backend").textContent=cfg.backend==="mock"?"MOCK — 実機未使用":"SANE — 実機";options("dpi",cfg.dpi.map(d=>[d,d+" dpi"+(d>2400?"（補間）":"")]));$("dpi").value=300;options("mode",cfg.modes.map(m=>[m,m]));
  for(let v=0;v<=210;v+=20)node("text",{x:v,y:-3,"font-size":4,"text-anchor":"middle",fill:"#42566a"},$("ticks")).textContent=v;
  for(let v=0;v<=291;v+=20)node("text",{x:-3,y:v+1,"font-size":4,"text-anchor":"end",fill:"#42566a"},$("ticks")).textContent=v;
- sync(roi);poll()}
+ loadPresets();drawQueue();sync(roi);poll()}
+function restore(s){for(const k of ["dpi","mode","format","method"])$(k).value=String(s[k]);sync(s)}
+function drawQueue(){
+ $("queueList").replaceChildren();$("queuedRects").replaceChildren();
+ queue.forEach((q,i)=>{
+  const s=q.settings;
+  node("rect",{x:s.left,y:s.top,width:s.width,height:s.height,fill:"#a855f7","fill-opacity":".08",stroke:"#9333ea","stroke-width":".6"},$("queuedRects"));
+  node("text",{x:s.left+1,y:s.top+4,fill:"#7e22ce","font-size":4},$("queuedRects")).textContent=i+1;
+  const row=document.createElement("div");row.className="queueRow";
+  const label=document.createElement("span");label.textContent=(i+1)+": "+s.width+"×"+s.height+" mm / "+s.dpi+" dpi / "+q.tiles+"枚";row.append(label);
+  for(const [name,fn] of [["呼出",()=>restore(s)],["↑",()=>{if(i>0){[queue[i-1],queue[i]]=[queue[i],queue[i-1]];drawQueue()}}],["削除",()=>{queue.splice(i,1);drawQueue()}]]){
+   const b=document.createElement("button");b.textContent=name;b.onclick=fn;row.append(b);
+  }$("queueList").append(row)
+ });
+ $("queueCount").textContent=queue.length+"領域 / "+queue.reduce((n,q)=>n+q.tiles,0)+"枚（概算）";
+ enabled()
+}
+$("addRegion").onclick=()=>{if(planned&&queue.length<32){queue.push({settings:{...input()},tiles:planned.tiles.length});drawQueue()}};
+$("clearQueue").onclick=()=>{queue=[];drawQueue()};
+$("batchScan").onclick=()=>start(false,true);
+function drawPresets(){options("presets",[["","選択してください"],...presets.map((p,i)=>[i,p.name])])}
+function loadPresets(){try{const raw=JSON.parse(localStorage.getItem("scanbed.presets.v1")||"[]");presets=Array.isArray(raw)?raw.filter(p=>typeof p?.name==="string"&&p.settings).slice(0,50):[]}catch{presets=[]}drawPresets()}
+function storePresets(){try{localStorage.setItem("scanbed.presets.v1",JSON.stringify(presets));drawPresets()}catch(e){$("status").textContent="プリセット保存失敗: "+e.message}}
+$("savePreset").onclick=()=>{const name=$("presetName").value.trim();if(!name||!planned)return;const item={name,settings:{...input()}};const i=presets.findIndex(p=>p.name===name);if(i>=0)presets[i]=item;else if(presets.length<50)presets.push(item);else return;storePresets();$("presets").value=String(presets.findIndex(p=>p.name===name))};
+$("loadPreset").onclick=()=>{if($("presets").value!==""){const p=presets[+$("presets").value];if(p)restore(p.settings)}};
+$("deletePreset").onclick=()=>{if($("presets").value!==""){presets.splice(+$("presets").value,1);storePresets()}};
 init().catch(e=>$("status").textContent=e.message);

@@ -77,6 +77,19 @@ class ApiTests(unittest.TestCase):
         with self.assertRaises(HTTPError) as e:self.get("/api/scan",dict(region(),left=999))
         self.assertEqual(e.exception.code,400)
         with self.assertRaises(HTTPError):self.get("/api/job?id=../")
+    def test_batch_mixed_conditions(self):
+        a=region()
+        b=dict(region(),left=50,dpi=600,format="jpeg",method="split")
+        j=self.job({"regions":[a,b]})
+        self.assertEqual(j["state"],"complete")
+        self.assertEqual([t["roiIndex"] for t in j["results"]],[1,2,2])
+        self.assertEqual([t["dpi"] for t in j["results"]],[300,600,600])
+        self.assertTrue(j["results"][1]["file"].endswith(".jpg"))
+        raw=self.get("/api/download?id="+j["id"]+"&tile=2&format=jpeg")[0]
+        with Image.open(io.BytesIO(raw)) as im:self.assertEqual(im.info["dpi"],(600,600))
+        with self.assertRaises(HTTPError) as e:self.get("/api/scan",{"regions":[a,dict(b,left=999)]})
+        self.assertEqual(e.exception.code,400)
+        self.assertEqual(len(json.loads(self.get("/api/history")[0])),1)
     def test_jpeg_capture(self):
         j=self.job(dict(region(),format="jpeg"))
         self.assertEqual(j["state"],"complete")

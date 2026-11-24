@@ -66,3 +66,19 @@ def plan(obj):
             "maxWidth":min((BED[0]-x)/10,math.floor(SAFE/(math.ceil(h*d/254))*254/d)/10),
             "maxHeight":min((BED[1]-y)/10,math.floor(SAFE/(math.ceil(w*d/254))*254/d)/10),
             "tiles":tiles}
+
+def batch_plan(regions):
+    """Validate every ROI first, then flatten tiles into one exclusive job."""
+    if not isinstance(regions,list) or not 1<=len(regions)<=32:
+        raise ValueError("batch requires 1 to 32 regions")
+    plans=[plan(r) for r in regions]
+    tiles=[]
+    for i,p in enumerate(plans,1):
+        for t in p["tiles"]:
+            tiles.append({**t,"index":len(tiles)+1,"roiIndex":i,
+                          "settings":{k:p[k] for k in ("dpi","mode","format")}})
+    total=sum(t["pixels"] for t in tiles)
+    if len(tiles)>256 or total>1_000_000_000:
+        raise ValueError("batch exceeds 256 tiles or 1 billion nominal acquired pixels")
+    return {"regions":[{k:p[k] for k in ("region","dpi","mode","format","method")} for p in plans],
+            "pixels":total,"tiles":tiles,"safePixels":SAFE,"hardPixels":LIMIT}
