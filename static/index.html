@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Scanbed Web</title><link rel="stylesheet" href="/style.css"></head>
+<body><header><h1>Scanbed Web</h1><span id="backend">接続確認中</span><span id="status" role="status"></span></header>
+<main><aside>
+<h2>取得条件</h2>
+<label>解像度<select id="dpi"></select></label>
+<label>カラーモード<select id="mode"></select></label>
+<label>取得原本<select id="format"><option value="png">PNG（可逆）</option><option value="jpeg">JPEG</option></select></label>
+<label>取得方式<select id="method"><option value="auto">自動分割</option><option value="single">一括</option><option value="split">分割</option></select></label>
+<h2>矩形指定</h2>
+<label>編集モード<select id="edit"><option value="free">自由矩形</option><option value="fixed">固定サイズ・移動</option><option value="ratio">縦横比固定</option><option value="max">最大面積に調整</option></select></label>
+<label>縦横比<select id="ratio"><option value="1">1:1</option><option value="1.3333333333">4:3</option><option value=".70710678">A4縦</option><option value="1.41421356">A4横</option></select></label>
+<div class="fields"><label>左 X (mm)<input id="left" type="number" step=".1"></label><label>上 Y (mm)<input id="top" type="number" step=".1"></label><label>幅 (mm)<input id="width" type="number" step=".1" min="3"></label><label>高さ (mm)<input id="height" type="number" step=".1" min="3"></label></div>
+<div class="buttons"><button id="full">全面</button><button id="fit">一括に収める</button><button id="preview">200dpi 全面プレビュー</button></div>
+<div id="hint" aria-live="polite"></div><progress id="meter" max="30" value="0"></progress><p id="dimensions"></p>
+<button id="scan" disabled>選択範囲を取得</button> <button id="cancel" disabled>停止</button>
+<p class="small">青：要求範囲。緑：取得タイル。安全予算30MP/枚（既存35MP制限に余裕）。取得成功を保証するものではありません。</p>
+</aside><section>
+<h2>原稿台 <small>210 × 291 mm・公称座標</small></h2>
+<div class="bed"><svg id="bed" viewBox="-14 -14 238 319" tabindex="0" aria-label="原稿台の矩形を編集">
+<defs><pattern id="grid" width="10" height="10" patternUnits="userSpaceOnUse"><path d="M10 0H0V10" fill="none" stroke="#91a1aa" stroke-width=".18"/></pattern></defs>
+<rect x="0" y="0" width="210" height="291" fill="#e5e7eb" id="background"/>
+<image id="overview" x="0" y="0" width="210" height="291" preserveAspectRatio="none" pointer-events="none"/>
+<rect width="210" height="291" fill="url(#grid)" pointer-events="none"/>
+<g id="ticks" pointer-events="none"></g><g id="tiles" pointer-events="none"></g>
+<rect id="roi" fill="#2563eb" fill-opacity=".12" stroke="#2563eb" stroke-width=".8" data-handle="move"/>
+<g id="handles"></g></svg></div>
+<p id="coords" class="small">原稿台座標: —</p>
+<h2>取得結果</h2><label>画像<select id="history"></select></label><label>タイル<select id="tile"></select></label>
+<div class="buttons"><button id="zoomout">−</button><button id="zoomin">＋</button><button id="zoomfit">画面に合わせる</button><button id="rotate">90°回転</button></div>
+<div class="viewer"><img id="result" alt="取得画像"></div><p id="resultmeta"></p>
+<div class="export"><label>JPEG品質<input id="quality" type="number" min="1" max="100" value="95"></label><label>色差<select id="sampling"><option value="0">4:4:4</option><option value="1">4:2:2</option><option value="2">4:2:0</option></select></label><button id="downloadOriginal" disabled>原本</button><button id="downloadJpeg" disabled>JPEG</button><button id="downloadPdf" disabled>PDF</button></div>
+</section></main><script src="/app.js"></script></body></html>
