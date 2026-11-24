@@ -7,6 +7,7 @@ LAN向けフラットベッドスキャンアプリ。Brother DCP-J940N / SANE �
 
 ## 開発モード（実機不要）
 ```sh
+sudo apt-get install libjpeg-turbo-progs # Ubuntu: full-resolution mosaic JPEG
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt

@@ -72,7 +72,7 @@ function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$(
  $("resultmeta").textContent=j.backend+" / "+(t.dpi??j.plan.dpi)+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
 }
-function selectJob(id){selected=id;clearAlignment();$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正。重複領域は後のタイルを優先。";const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();const n=j?.state==="complete"?(j.plan.regions?.length||1):0;options("mosaicRoi",Array.from({length:n},(_,i)=>[i+1,"ROI "+(i+1)]));for(const k of ["mosaicPreview","mosaicDownload","alignment"])$(k).disabled=!n;enabled()}
+function selectJob(id){selected=id;clearAlignment();$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正。重複領域は後のタイルを優先。";const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();const n=j?.state==="complete"?(j.plan.regions?.length||1):0;options("mosaicRoi",Array.from({length:n},(_,i)=>[i+1,"ROI "+(i+1)]));for(const k of ["mosaicPreview","mosaicDownload","mosaicJpeg","alignment"])$(k).disabled=!n;enabled()}
 $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("tile").onchange=()=>{selectionVersion++;showTile()};
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
@@ -105,6 +105,8 @@ $("alignment").onclick=async()=>{
  finally{if(token===alignmentToken)$("alignment").disabled=false}
 };
 $("mosaicDownload").onclick=()=>{const q=mosaicQuery("full");q.set("download","1");location.href="/api/mosaic?"+q};
+$("mosaicJpeg").onclick=()=>{const quality=+$("quality").value;if(!Number.isInteger(quality)||quality<1||quality>100){alert("品質は1〜100");return}
+ const q=mosaicQuery("full");q.set("download","1");q.set("format","jpeg");q.set("quality",quality);q.set("sampling",$("sampling").value);location.href="/api/mosaic?"+q};
 $("resume").onclick=async()=>{
  const id=selected,j=history.find(x=>x.id===id);
  if(!j||active||starting||!confirm("原稿台上の対象物を動かしていませんか？ 同じ条件で未取得タイルのみ再開します。"))return;

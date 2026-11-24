@@ -11,6 +11,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: sudo apt-get update -qq && sudo apt-get install -y libjpeg-turbo-progs
       - run: pip install -r requirements.txt
       - run: python -m compileall -q .
       - run: node --check static/app.js
@@ -23,6 +24,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - run: sudo apt-get update -qq && sudo apt-get install -y libjpeg-turbo-progs
       - run: pip install -r requirements.txt
       - run: npm install --no-save --no-package-lock playwright@1.56.1
       - run: npx playwright install --with-deps chromium

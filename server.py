@@ -258,9 +258,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.scanner.mosaic_guard.acquire(blocking=False): raise Busy("mosaic export busy")
                 try:
                     with tempfile.TemporaryDirectory(dir=self.scanner.root) as tmp:
-                        path,info=compose(j,self.scanner.root/j["id"],tmp,roi,scale=="preview")
-                        name=f'roi-{roi:02d}-nominal-{scale}.png' if q.get("download")==["1"] else None
-                        return self.stream(path,"image/png",name)
+                        fmt=q.get("format",["png"])[0]
+                        quality=int(q.get("quality",[95])[0]);sampling=int(q.get("sampling",[0])[0])
+                        path,info=compose(j,self.scanner.root/j["id"],tmp,roi,scale=="preview",fmt,quality,sampling)
+                        ext="jpg" if fmt=="jpeg" else "png"
+                        name=f'roi-{roi:02d}-nominal-{scale}.{ext}' if q.get("download")==["1"] else None
+                        return self.stream(path,"image/jpeg" if fmt=="jpeg" else "image/png",name)
                 finally: self.scanner.mosaic_guard.release()
             if p=="/api/zip":
                 j=self.scanner.read(q["id"][0])

@@ -89,6 +89,10 @@ const {join}=require("node:path");
   await page.waitForFunction(()=>document.querySelector("#alignmentInfo").textContent.includes("補正未適用"));
   assert.equal(await page.locator("#alignmentPairs table tr").count(),2);
   console.log("Overlap diagnostics displayed without applying correction");
+  await page.fill("#quality","91");await page.selectOption("#sampling","1");
+  const jpegMosaic=page.waitForEvent("download");await page.click("#mosaicJpeg");
+  const jd=await jpegMosaic;assert.equal(jd.suggestedFilename(),"roi-01-nominal-full.jpg");assert.equal(await jd.failure(),null);
+  console.log("Full-resolution mosaic JPEG download passed");
   console.log("Nominal mosaic preview and full PNG download passed");
   console.log("Browser ROI editing, split visualization, keyboard, fixed position, scan and JPEG download passed");
  }finally{if(browser)await browser.close();child.kill();await new Promise(r=>child.once("exit",r));rmSync(root,{recursive:true,force:true})}

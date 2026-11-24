@@ -4,7 +4,7 @@ Full PNG is streamed from a disk-backed RGB raster. Only one source tile and
 a bounded number of rows are in memory at once. Overlap uses plan order
 (last tile wins); no implicit registration, blending or original changes.
 """
-import math, shutil, struct, zlib
+import math, shutil, struct, subprocess, zlib
 from pathlib import Path
 from PIL import Image
 
@@ -57,15 +57,32 @@ def chunk(f,kind,data):
     f.write(struct.pack(">I",len(data)));f.write(kind);f.write(data)
     f.write(struct.pack(">I",zlib.crc32(data,zlib.crc32(kind))&0xffffffff))
 
-def compose(job,folder,work,roi_index,preview=False):
+def jpeg_density(path,dx,dy):
+    # cjpeg writes JFIF APP0 immediately after SOI. Verify before editing metadata.
+    with path.open("r+b") as f:
+        header=f.read(20)
+        if header[:4]!=b"\xff\xd8\xff\xe0" or header[6:11]!=b"JFIF\x00" or len(header)<20:
+            raise ValueError("unexpected JPEG header")
+        f.seek(13)
+        f.write(struct.pack(">BHH",1,max(1,round(dx)),max(1,round(dy))))
+
+def compose(job,folder,work,roi_index,preview=False,fmt="png",quality=95,sampling=0):
     info=layout(job,roi_index,preview)
     w,h=info["width"],info["height"]
+    if fmt not in ("png","jpeg") or not 1<=quality<=100 or sampling not in (0,1,2):
+        raise ValueError("invalid mosaic export settings")
+    if fmt=="jpeg":
+        if max(w,h)>65500: raise ValueError("JPEG dimension limit; use PNG")
+        if not shutil.which("cjpeg"): raise ValueError("JPEG mosaic requires cjpeg (libjpeg-turbo-progs)")
     work=Path(work)
     # A raw RGB raster plus worst-case PNG and compression overhead.
     if shutil.disk_usage(work).free<w*h*7+50_000_000: raise ValueError("insufficient mosaic disk space")
-    raw=work/"raster.rgb";out=work/"mosaic.png"
+    raw=work/"raster.ppm";out=work/("mosaic.jpg" if fmt=="jpeg" else "mosaic.png")
+    header=f"P6\n{w} {h}\n255\n".encode("ascii")
+    offset=len(header)
     with raw.open("w+b") as f:
-        f.truncate(w*h*3)
+        f.write(header)
+        f.truncate(offset+w*h*3)
         for t in info["tiles"]:
             x0,y0,x1,y1=t["box"];tw=x1-x0;th=y1-y0
             path=Path(folder)/t["file"]
@@ -81,10 +98,21 @@ def compose(job,folder,work,roi_index,preview=False):
                         n=min(16,th-y)
                         with rgb.crop((0,y,tw,y+n)) as band: data=band.tobytes()
                         for k in range(n):
-                            f.seek(((y0+y+k)*w+x0)*3)
+                            f.seek(offset+((y0+y+k)*w+x0)*3)
                             f.write(data[k*tw*3:(k+1)*tw*3])
                 finally: rgb.close()
-        f.seek(0)
+        f.flush()
+        if fmt=="jpeg":
+            subs=("1x1,1x1,1x1","2x1,1x1,1x1","2x2,1x1,1x1")[sampling]
+            # Baseline sequential compression avoids the full-image coefficient buffer.
+            result=subprocess.run(["cjpeg","-quality",str(quality),"-sample",subs,
+                                   "-baseline","-outfile",str(out),str(raw)],
+                                  capture_output=True,timeout=1800)
+            if result.returncode: raise ValueError("JPEG encoder failed: "+result.stderr.decode(errors="replace")[-300:])
+            jpeg_density(out,info["outputDpiX"],info["outputDpiY"])
+            raw.unlink()
+            return out,info
+        f.seek(offset)
         with out.open("wb") as png:
             png.write(b"\x89PNG\r\n\x1a\n")
             chunk(png,b"IHDR",struct.pack(">IIBBBBB",w,h,8,2,0,0,0))

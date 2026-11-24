@@ -153,6 +153,17 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(im.size,(118,142))
             self.assertEqual(im.getpixel((117,141)),(243,240,232))
             self.assertEqual(im.getpixel((0,0)),(243,240,232))
+        for sampling in (0,1,2):
+            data,headers=self.get("/api/mosaic"+q+"&format=jpeg&quality=95&sampling="+str(sampling)+"&download=1")
+            with Image.open(io.BytesIO(data)) as im:
+                from PIL.JpegImagePlugin import get_sampling
+                im.load()
+                self.assertEqual(im.size,(118,142))
+                self.assertEqual(im.format,"JPEG")
+                self.assertEqual(get_sampling(im),sampling)
+                self.assertEqual(im.info["dpi"],(300,301))
+            self.assertIn("nominal-full.jpg",headers["Content-Disposition"])
+        with self.assertRaises(HTTPError):self.get("/api/mosaic"+q+"&format=jpeg&quality=101")
         self.assertEqual(originals,[self.get("/api/image?id="+j["id"]+"&tile="+str(t["index"]))[0] for t in j["results"]])
     def test_jpeg_capture(self):
         j=self.job(dict(region(),format="jpeg"))
