@@ -11,7 +11,7 @@ const {join}=require("node:path");
  try{
   for(let i=0;i<100;i++){try{if((await fetch("http://127.0.0.1:18766/api/config")).ok)break}catch{}await new Promise(r=>setTimeout(r,100))}
   browser=await chromium.launch({headless:true});
-  const page=await browser.newPage({viewport:{width:1280,height:1000},acceptDownloads:true});
+  const page=await browser.newPage({viewport:{width:1280,height:1000},acceptDownloads:true,baseURL:"http://127.0.0.1:18766"});
   await page.goto("http://127.0.0.1:18766/");
   await page.waitForFunction(()=>document.querySelector("#backend").textContent.includes("MOCK"));
   await page.selectOption("#dpi","2400");
