@@ -1,0 +1,29 @@
+name: Full-bed synthetic mosaic benchmark
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - tests/benchmark_mosaic.py
+      - .github/workflows/mosaic-benchmark.yml
+permissions:
+  contents: read
+jobs:
+  full-bed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      PYTHONPATH: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: sudo apt-get update -qq && sudo apt-get install -y libjpeg-turbo-progs
+      - run: pip install -r requirements.txt
+      - run: python -m py_compile tests/benchmark_mosaic.py
+      - run: /usr/bin/time -v python tests/benchmark_mosaic.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mosaic-benchmark-result
+          path: benchmark-result.json
+          if-no-files-found: error
