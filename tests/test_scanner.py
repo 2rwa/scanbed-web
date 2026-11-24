@@ -1,4 +1,4 @@
-import io,json,tempfile,threading,time,unittest
+import io,json,tempfile,threading,time,unittest,zipfile
 from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
@@ -69,6 +69,9 @@ class ApiTests(unittest.TestCase):
         j=self.job(dict(region(),method="split"))
         self.assertEqual(j["state"],"complete")
         self.assertEqual(len(j["results"]),2)
+        with zipfile.ZipFile(io.BytesIO(self.get("/api/zip?id="+j["id"])[0])) as z:
+            self.assertEqual(set(z.namelist()),{"tile-001.png","tile-002.png","manifest.json"})
+            self.assertEqual(z.read("tile-001.png"),self.get("/api/image?id="+j["id"]+"&tile=1")[0])
         self.assertEqual(json.loads(self.get("/api/history")[0])[0]["id"],j["id"])
     def test_validation(self):
         with self.assertRaises(HTTPError) as e:self.get("/api/scan",dict(region(),left=999))

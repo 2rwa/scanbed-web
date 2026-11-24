@@ -1,5 +1,5 @@
 """Standalone HTTP API. Default mock; no hardware discovery or access on startup."""
-import argparse, contextlib, fcntl, io, json, os, re, shutil, subprocess, threading, time, uuid, zipfile
+import argparse, contextlib, fcntl, io, json, os, re, shutil, subprocess, tempfile, threading, time, uuid, zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -177,6 +177,15 @@ class Handler(BaseHTTPRequestHandler):
             if p=="/api/history": return self.send(self.scanner.history())
             if p=="/api/status": return self.send({"active":self.scanner.active})
             if p=="/api/job": return self.send(self.scanner.read(q["id"][0]))
+            if p=="/api/zip":
+                j=self.scanner.read(q["id"][0])
+                if not j["results"]: raise FileNotFoundError("no completed tiles")
+                with tempfile.TemporaryDirectory(dir=self.scanner.root) as tmp:
+                    path=Path(tmp)/"originals.zip"
+                    with zipfile.ZipFile(path,"w",compression=zipfile.ZIP_STORED,allowZip64=True) as z:
+                        for t in j["results"]: z.write(self.scanner.root/j["id"]/t["file"],t["file"])
+                        z.writestr("manifest.json",json.dumps(j,ensure_ascii=False,indent=2))
+                    return self.stream(path,"application/zip","scan-"+j["id"]+".zip")
             if p in ("/api/image","/api/download"):
                 fmt=q.get("format",["original"])[0] if p=="/api/download" else "original"
                 path,data,name=self.scanner.export(q["id"][0],int(q["tile"][0]),fmt,int(q.get("quality",[95])[0]),int(q.get("sampling",[0])[0]))

@@ -1,14 +1,14 @@
 "use strict";
 const $=id=>document.getElementById(id),keys=["left","top","width","height"],svgNS="http://www.w3.org/2000/svg";
 let roi={left:5,top:5,width:80,height:60},cfg=null,planned=null,request=0,drag=null,active=null,owned=null,previewId=null,selected=null,history=[],angle=0,zoom=0;
-let selectionVersion=0,ownedVersion=0;
+let selectionVersion=0,ownedVersion=0,planTimer=null;
 const round=v=>Math.round(v*10)/10,clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 function node(tag,attrs,parent){const n=document.createElementNS(svgNS,tag);for(const [k,v] of Object.entries(attrs))n.setAttribute(k,v);parent.append(n);return n}
 function options(id,items){$(id).replaceChildren(...items.map(([v,t])=>new Option(t,v)))}
 async function api(path,data){const r=await fetch(path,data===undefined?{}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});const j=await r.json();if(!r.ok)throw Error(j.error||r.status);return j}
 function input(){return {...roi,dpi:+$("dpi").value,mode:$("mode").value,format:$("format").value,method:$("method").value}}
 function normalized(r){let w=clamp(round(r.width),3,210),h=clamp(round(r.height),3,291);return {left:clamp(round(r.left),0,round(210-w)),top:clamp(round(r.top),0,round(291-h)),width:w,height:h}}
-function sync(r){roi=normalized(r);for(const k of keys)$(k).value=roi[k].toFixed(1);render();refreshPlan()}
+function sync(r){roi=normalized(r);for(const k of keys)$(k).value=roi[k].toFixed(1);render();schedulePlan()}
 function render(){
  const {left:x,top:y,width:w,height:h}=roi;
  for(const [k,v] of Object.entries({x,y,width:w,height:h}))$("roi").setAttribute(k,v);
@@ -18,6 +18,7 @@ function render(){
  }
 }
 function enabled(){ $("scan").disabled=!!active||!planned;$("preview").disabled=!!active;$("cancel").disabled=!owned||active!==owned}
+function schedulePlan(){clearTimeout(planTimer);request++;planned=null;enabled();planTimer=setTimeout(refreshPlan,100)}
 async function refreshPlan(){
  const seq=++request;planned=null;enabled();$("tiles").replaceChildren();
  const d=+$("dpi").value,pixels=Math.ceil(roi.width*d/25.4)*Math.ceil(roi.height*d/25.4);
@@ -62,7 +63,7 @@ $("edit").onchange=render;$("full").onclick=()=>sync({left:0,top:0,width:210,hei
 async function start(preview){try{const p=preview?{left:0,top:0,width:210,height:291,dpi:200,mode:"24bit Color",format:"png",method:"single"}:input();$("scan").disabled=true;$("preview").disabled=true;const j=await api("/api/scan",p);active=owned=j.id;ownedVersion=selectionVersion;if(preview)previewId=j.id;enabled()}catch(e){$("status").textContent=e.message;enabled()}}
 $("scan").onclick=()=>start(false);$("preview").onclick=()=>start(true);$("cancel").onclick=async()=>{try{await api("/api/cancel",{id:owned})}catch(e){$("status").textContent=e.message}};
 function tileInfo(){return history.find(j=>j.id===selected)}
-function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$("tile").value);for(const id of ["downloadOriginal","downloadJpeg","downloadPdf"])$(id).disabled=!t;if(!t){$("result").removeAttribute("src");$("resultmeta").textContent=j?.error||"";return}
+function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$("tile").value);for(const id of ["downloadOriginal","downloadJpeg","downloadPdf"])$(id).disabled=!t;$("downloadZip").disabled=!j?.results.length;if(!t){$("result").removeAttribute("src");$("resultmeta").textContent=j?.error||"";return}
  $("result").src="/api/image?id="+j.id+"&tile="+t.index;
  $("resultmeta").textContent=j.backend+" / "+j.plan.dpi+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
@@ -72,6 +73,7 @@ $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
 for(const [id,fmt] of [["downloadOriginal","original"],["downloadJpeg","jpeg"],["downloadPdf","pdf"]])$(id).onclick=()=>{const quality=+$("quality").value;if(fmt==="jpeg"&&(!Number.isInteger(quality)||quality<1||quality>100)){alert("品質は1〜100");return}location.href="/api/download?"+new URLSearchParams({id:selected,tile:$("tile").value,format:fmt,quality,sampling:$("sampling").value})};
+$("downloadZip").onclick=()=>{location.href="/api/zip?id="+selected};
 async function poll(){
  try{const status=await api("/api/status");active=status.active;
  history=await api("/api/history");const existing=$("history").value;
