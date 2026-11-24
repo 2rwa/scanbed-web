@@ -137,6 +137,20 @@ class ApiTests(unittest.TestCase):
             self.get("/api/resume",{"id":j["id"],"confirmedUnmoved":True})
         self.assertEqual(e.exception.code,400)
 
+    def test_mosaic_split_originals_and_dimensions(self):
+        j=self.job(dict(region(),method="split"))
+        q="?id="+j["id"]+"&roi=1&scale=full"
+        originals=[self.get("/api/image?id="+j["id"]+"&tile="+str(t["index"]))[0] for t in j["results"]]
+        p=json.loads(self.get("/api/mosaic-plan"+q)[0])
+        self.assertFalse(p["calibrated"])
+        self.assertEqual((p["width"],p["height"]),(118,142))
+        data,_=self.get("/api/mosaic"+q)
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+            self.assertEqual(im.size,(118,142))
+            self.assertEqual(im.getpixel((117,141)),(243,240,232))
+            self.assertEqual(im.getpixel((0,0)),(243,240,232))
+        self.assertEqual(originals,[self.get("/api/image?id="+j["id"]+"&tile="+str(t["index"]))[0] for t in j["results"]])
     def test_jpeg_capture(self):
         j=self.job(dict(region(),format="jpeg"))
         self.assertEqual(j["state"],"complete")

@@ -72,12 +72,23 @@ function showTile(){const j=tileInfo(),t=j?.results.find(t=>String(t.index)===$(
  $("resultmeta").textContent=j.backend+" / "+(t.dpi??j.plan.dpi)+" dpi / "+t.widthPx+" × "+t.heightPx+" px / "+(t.bytes/1e6).toFixed(2)+" MB / "+JSON.stringify(t.region);
  angle=zoom=0;view();
 }
-function selectJob(id){selected=id;const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();enabled()}
+function selectJob(id){selected=id;$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正。重複領域は後のタイルを優先。";const j=tileInfo();options("tile",(j?.results||[]).map(t=>[t.index,"ROI "+(t.roiIndex||1)+" / Tile "+t.index]));$("history").value=id;showTile();const n=j?.state==="complete"?(j.plan.regions?.length||1):0;options("mosaicRoi",Array.from({length:n},(_,i)=>[i+1,"ROI "+(i+1)]));for(const k of ["mosaicPreview","mosaicDownload"])$(k).disabled=!n;enabled()}
 $("history").onchange=()=>{selectionVersion++;selectJob($("history").value)};$("tile").onchange=()=>{selectionVersion++;showTile()};
 function view(){const img=$("result");img.style.maxWidth=zoom?"none":"100%";img.style.width=zoom?Math.round(img.naturalWidth*zoom)+"px":"";img.style.transform="rotate("+angle+"deg)"}
 $("result").onload=view;$("zoomfit").onclick=()=>{angle=zoom=0;view()};$("zoomin").onclick=()=>{zoom=Math.min(10,(zoom||1)*1.25);view()};$("zoomout").onclick=()=>{zoom=Math.max(.05,(zoom||1)/1.25);view()};$("rotate").onclick=()=>{angle=(angle+90)%360;view()};
 for(const [id,fmt] of [["downloadOriginal","original"],["downloadJpeg","jpeg"],["downloadPdf","pdf"]])$(id).onclick=()=>{const quality=+$("quality").value;if(fmt==="jpeg"&&(!Number.isInteger(quality)||quality<1||quality>100)){alert("品質は1〜100");return}location.href="/api/download?"+new URLSearchParams({id:selected,tile:$("tile").value,format:fmt,quality,sampling:$("sampling").value})};
 $("downloadZip").onclick=()=>{location.href="/api/zip?id="+selected};
+function mosaicQuery(scale){return new URLSearchParams({id:selected,roi:$("mosaicRoi").value,scale})}
+$("mosaicRoi").onchange=()=>{$("mosaicImage").removeAttribute("src");$("mosaicInfo").textContent="公称座標・未校正"};
+$("mosaicPreview").onclick=async()=>{
+ const q=mosaicQuery("preview");
+ try{const p=await api("/api/mosaic-plan?"+q);if(q.get("id")!==selected||q.get("roi")!==$("mosaicRoi").value)return;
+ $("mosaicInfo").textContent=p.width+" × "+p.height+" px / "+p.tiles.length+"枚 / 公称座標・未校正";
+ $("mosaicImage").src="/api/mosaic?"+q;
+ }catch(e){$("mosaicInfo").textContent=e.message}
+};
+$("mosaicImage").onerror=()=>{$("mosaicInfo").textContent="合成プレビューの取得に失敗しました"};
+$("mosaicDownload").onclick=()=>{const q=mosaicQuery("full");q.set("download","1");location.href="/api/mosaic?"+q};
 $("resume").onclick=async()=>{
  const id=selected,j=history.find(x=>x.id===id);
  if(!j||active||starting||!confirm("原稿台上の対象物を動かしていませんか？ 同じ条件で未取得タイルのみ再開します。"))return;

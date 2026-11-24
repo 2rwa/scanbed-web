@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit, parse_qs
 from PIL import Image, ImageDraw
 from geometry import plan, batch_plan, DPI, MODES, KEYS, LIMIT
+from mosaic import layout, compose
 
 STATIC=Path(__file__).resolve().parent/"static"
 ID=re.compile(r"[0-9a-f]{32}")
@@ -25,6 +26,7 @@ class Scanner:
         self.guard=threading.Lock()
         self.active=None
         self.stop=threading.Event()
+        self.mosaic_guard=threading.Lock()
         # Never recover a live job automatically: a process restart is not permission to scan.
         # A stale running manifest may be explicitly resumed when the shared lock is free.
 
@@ -242,6 +244,18 @@ class Handler(BaseHTTPRequestHandler):
             if p=="/api/history": return self.send(self.scanner.history())
             if p=="/api/status": return self.send({"active":self.scanner.active})
             if p=="/api/job": return self.send(self.scanner.read(q["id"][0]))
+            if p in ("/api/mosaic-plan","/api/mosaic"):
+                j=self.scanner.read(q["id"][0]);roi=int(q.get("roi",[1])[0])
+                scale=q.get("scale",["preview"])[0]
+                if scale not in ("preview","full"): raise ValueError("invalid mosaic scale")
+                if p=="/api/mosaic-plan": return self.send(layout(j,roi,scale=="preview"))
+                if not self.scanner.mosaic_guard.acquire(blocking=False): raise Busy("mosaic export busy")
+                try:
+                    with tempfile.TemporaryDirectory(dir=self.scanner.root) as tmp:
+                        path,info=compose(j,self.scanner.root/j["id"],tmp,roi,scale=="preview")
+                        name=f'roi-{roi:02d}-nominal-{scale}.png' if q.get("download")==["1"] else None
+                        return self.stream(path,"image/png",name)
+                finally: self.scanner.mosaic_guard.release()
             if p=="/api/zip":
                 j=self.scanner.read(q["id"][0])
                 if not j["results"]: raise FileNotFoundError("no completed tiles")

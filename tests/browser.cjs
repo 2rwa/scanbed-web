@@ -79,6 +79,13 @@ const {join}=require("node:path");
   assert.equal(after.results.length,2);
   assert.ok(await page.locator("#resume").isDisabled());
   console.log("Browser failure recovery and original preservation passed");
+  await page.click("#mosaicPreview");
+  await page.waitForFunction(()=>document.querySelector("#mosaicImage").naturalWidth>0);
+  assert.equal(await page.locator("#mosaicImage").evaluate(el=>el.naturalWidth),157);
+  assert.ok((await page.locator("#mosaicInfo").textContent()).includes("未校正"));
+  const mosaicDownload=page.waitForEvent("download");await page.click("#mosaicDownload");
+  const md=await mosaicDownload;assert.equal(md.suggestedFilename(),"roi-01-nominal-full.png");assert.equal(await md.failure(),null);
+  console.log("Nominal mosaic preview and full PNG download passed");
   console.log("Browser ROI editing, split visualization, keyboard, fixed position, scan and JPEG download passed");
  }finally{if(browser)await browser.close();child.kill();await new Promise(r=>child.once("exit",r));rmSync(root,{recursive:true,force:true})}
 })().catch(e=>{console.error(e);process.exitCode=1});
